@@ -1,0 +1,7 @@
+*.exe
+*.out
+gpu_solver
+__pycache__/
+*.csv
+*.txt
+!sample_matrix.txt
