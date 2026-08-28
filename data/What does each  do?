@@ -1,0 +1,7 @@
+What each file does
+
+mps_reader.py — a library, not something you run directly. It parses Netlib .mps LP benchmark files (the standard format at netlib.org/lp/data) into plain NumPy arrays (c, A_ub, b_ub, A_eq, b_eq, bounds) that scipy.optimize.linprog understands. cpu_solve.py imports it.
+
+generate_synthetic_lp.py — a standalone script. Since real Netlib problems are mostly sparse (bad for showing off a dense GPU solver), this generates your own random dense LP that mimics a petroleum-blending scenario (maximize profit under capacity constraints), and saves it to a .npz file.
+
+cpu_solve.py — the main script. Takes either a .mps file or a .npz file (from the generator), solves it on CPU with scipy.optimize.linprog(method="highs"), times the solve, and writes a JSON "verification package" (objective value, solution vector, solve time) — this is what your GPU teammate compares their cuSOLVER result against.
