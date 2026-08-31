@@ -1,0 +1,75 @@
+## All commands to run each file, with what each does
+
+### Setup (one-time)
+
+```bash
+pip install -r requirements.txt
+```
+Installs `numpy`, `scipy`, `highspy` — everything all three scripts need.
+
+---
+
+### `generate_synthetic_lp.py` — makes a random dense LP problem
+
+```bash
+python generate_synthetic_lp.py --vars 500 --constraints 300 --seed 42 --out matrix_input.txt
+```
+- `--vars` — number of decision variables (columns)
+- `--constraints` — number of constraint rows
+- `--seed` — random seed (same seed = same problem every time, for reproducibility)
+- `--density` *(optional, default 1.0)* — fraction of nonzero entries in the constraint matrix; use e.g. `--density 0.3` for a sparse matrix
+- `--out` — output file path (the shared 4-line `.txt` format)
+
+**What it does:** generates a synthetic profit-maximization LP (petroleum-blending style) with random costs/constraints, and writes it directly to `matrix_input.txt`. No input file needed.
+
+---
+
+### `mps_to_txt.py` — converts a real Netlib `.mps` file into the shared format
+
+**Single file:**
+```bash
+python mps_to_txt.py afiro.mps --out afiro.txt
+```
+- first positional arg — the input `.mps` file
+- `--out` — output `.txt` file path
+
+**Batch (convert a whole folder at once):**
+```bash
+python mps_to_txt.py --input-dir netlib_folder --output-dir converted_txt
+```
+- `--input-dir` — folder containing multiple `.mps` files
+- `--output-dir` — where to write all the converted `.txt`/`.meta.json` pairs
+
+**What it does:** reads the `.mps` file via `highspy`, canonicalizes it into `A x <= b, x >= 0` form, and writes both `<name>.txt` (the flat format) and `<name>.meta.json` (the objective correction constant).
+
+---
+
+### `cpu_solve.py` — solves any `.txt` file on CPU
+
+```bash
+python cpu_solve.py --input matrix_input.txt --out result.json
+```
+- `--input` — the `.txt` file to solve (from either generator above)
+- `--out` — where to write the result JSON
+
+**What it does:** reads the matrix, solves it with `scipy.optimize.linprog(method="highs")`, times the solve, auto-detects a companion `.meta.json` if present (for Netlib-derived problems) and adds its constant, then writes `objective_value`, `solution_vector`, and `solve_time_seconds` to the output JSON.
+
+---
+
+### Full example — Netlib path, start to finish
+
+```bash
+pip install -r requirements.txt
+python mps_to_txt.py afiro.mps --out afiro.txt
+python cpu_solve.py --input afiro.txt --out afiro_result.json
+```
+
+### Full example — synthetic path, start to finish
+
+```bash
+pip install -r requirements.txt
+python generate_synthetic_lp.py --vars 500 --constraints 300 --seed 42 --out matrix_input.txt
+python cpu_solve.py --input matrix_input.txt --out result.json
+```
+
+That's every command across all three scripts. Want me to also generate a single shell/batch script that runs the whole thing end-to-end in one go, for your demo?
