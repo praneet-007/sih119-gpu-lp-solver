@@ -5,6 +5,7 @@ import os
 import re
 import pandas as pd
 import time
+import io  # CHANGED: Used to safely read the uploaded CSV multiple times.
 
 st.set_page_config(
     page_title="GPU Optimization Solver",
@@ -339,12 +340,42 @@ CPU_TIME=1250
 GPU_COMPUTE_TIME=180
 GPU_TOTAL_TIME=205
 SPEEDUP=6.10
-OBJECTIVE_VALUE=84523.45
+OBJECTIVE_VALUE=12345.70
 """
 
     return parse_solver_output(output), output
 
+# CHANGED: Demo optimization trace for the GPU Optimization section
+def demo_optimization_trace():
+    """
+    Returns simulated optimization iterations for DEMO MODE.
 
+    # CHANGED:
+    # These values are only for demonstrating the UI.
+    # Later, the real CUDA solver will provide these values.
+    """
+
+    return pd.DataFrame({
+        "Iteration": [1, 10, 20, 30, 40, 50, 60],
+        "Objective": [
+            18452.2,
+            15120.5,
+            13742.8,
+            12982.1,
+            12521.4,
+            12391.8,
+            12345.7
+        ],
+        "Residual": [
+            8.42,
+            4.12,
+            2.31,
+            1.04,
+            0.52,
+            0.18,
+            0.03
+        ]
+    })
 st.markdown(
     '<div class="main-title">⚡ GPU OPTIMIZATION SOLVER</div>',
     unsafe_allow_html=True
@@ -374,10 +405,8 @@ with st.sidebar:
 
     if demo_mode:
 
-        st.info
-        (
-            "Demo mode is using simulated solver results."
-        )
+        # CHANGED: Correct Streamlit info call for demo mode.
+        st.info("Demo mode is using simulated solver results.")
 
     else:
 
@@ -479,28 +508,41 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 
+
+# ============================================================
+# PROBLEM INPUT SECTION
+# ============================================================
+
+# CHANGED: Added a clear heading so the judge knows this
+# section represents the input to our optimization system.
 st.markdown(
-    '<div class="section-title">PETROLEUM MATRIX INPUT</div>',
+    '<div class="section-title">PROBLEM INPUT</div>',
     unsafe_allow_html=True
 )
 
+# CHANGED: Upload the optimization matrix supplied by the user.
 uploaded_file = st.file_uploader(
     "Upload petroleum matrix",
     type=["txt", "csv", "dat"],
     label_visibility="collapsed"
 )
 
-
+# CHANGED: Only display the following information
+# after the user has successfully uploaded a file.
 if uploaded_file:
 
+    # Show confirmation that the input has been received.
     st.success(
         f"✓ MATRIX LOADED — {uploaded_file.name}"
     )
 
+    # Create two columns so important input information
+    # is visible immediately to the judge.
     col1, col2 = st.columns(2)
 
     with col1:
 
+        # Display the size of the uploaded input file.
         st.metric(
             "FILE SIZE",
             f"{uploaded_file.size / 1024:.2f} KB"
@@ -508,34 +550,515 @@ if uploaded_file:
 
     with col2:
 
+        # Display the file format/type.
         st.metric(
             "FILE TYPE",
             uploaded_file.type or "TEXT"
         )
 
-    with st.expander(
-        "◈ PREVIEW MATRIX DATA"
-    ):
+    # Allow the judge to open the actual input data.
+    # This helps demonstrate what is being sent into the solver.
+    with st.expander("◈ PREVIEW MATRIX DATA"):
 
         try:
 
-            content = uploaded_file.getvalue().decode(
-                "utf-8"
-            )
+            # Convert the uploaded file into readable text.
+            content = uploaded_file.getvalue().decode("utf-8")
 
+            # Split the input into individual rows.
             lines = content.splitlines()
 
+            # CHANGED: Show only the first 20 rows so that
+            # a large matrix does not fill the entire screen.
             st.code(
                 "\n".join(lines[:20])
             )
-
+            st.divider()
+  
         except Exception:
 
+            # Display an error if the uploaded file cannot
+            # be interpreted as normal text.
             st.warning(
                 "Unable to preview the matrix."
             )
+            st.divider()
 
+            #............
+                # ============================================================
+    # CHANGED: MATRIX ANALYSIS
+    # ============================================================
+    # This section analyzes the uploaded sparse matrix and gives
+    # the user/judge a quick understanding of its size and structure.
+    # ============================================================
 
+    try:
+
+        # CHANGED: Read the uploaded CSV directly into a pandas DataFrame.
+        # This allows us to calculate rows, columns and non-zero values.
+        matrix_df = pd.read_csv(uploaded_file)
+
+        # CHANGED: Count the number of unique constraint rows.
+        # The CSV uses the "row" column to identify each constraint.
+        constraint_count = matrix_df[
+            matrix_df["type"].str.lower() == "constraint"
+        ]["row"].nunique()
+
+        # CHANGED: Find the highest column index.
+        # In a sparse matrix, the column number represents a variable.
+        variable_count = matrix_df["col"].max()
+
+        # CHANGED: Count the number of actual non-zero matrix entries.
+        # Each row in this sparse CSV represents a stored coefficient.
+        non_zero_count = len(matrix_df)
+
+        # CHANGED: Calculate the total number of possible elements
+        # in the complete matrix.
+        total_elements = constraint_count * variable_count
+
+        # CHANGED: Calculate how much of the matrix is actually populated.
+        # A sparse matrix has a very small percentage of non-zero values.
+        if total_elements > 0:
+            sparsity = (
+                (1 - (non_zero_count / total_elements)) * 100
+            )
+        else:
+            sparsity = 0
+
+        # ========================================================
+        # CHANGED: Display MATRIX ANALYSIS heading
+        # ========================================================
+
+        st.markdown(
+            '<div class="section-title">MATRIX ANALYSIS</div>',
+            unsafe_allow_html=True
+        )
+
+        # CHANGED: Create four columns for important matrix metrics.
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+
+            # Number of constraints in the optimization problem.
+            st.metric(
+                "CONSTRAINTS",
+                f"{constraint_count:,}"
+            )
+
+        with col2:
+
+            # Number of variables represented by matrix columns.
+            st.metric(
+                "VARIABLES",
+                f"{int(variable_count):,}"
+            )
+
+        with col3:
+
+            # Number of stored/non-zero coefficients.
+            st.metric(
+                "NON-ZERO VALUES",
+                f"{non_zero_count:,}"
+            )
+
+        with col4:
+
+            # Percentage of the matrix that contains zero values.
+            st.metric(
+                "SPARSITY",
+                f"{sparsity:.2f}%"
+            )
+
+        # CHANGED: Display the mathematical matrix dimensions.
+        st.info(
+            f"Matrix A dimensions: "
+            f"{constraint_count:,} × {int(variable_count):,}"
+        )
+
+    except Exception as e:
+
+        # If the uploaded file does not follow the expected CSV format,
+        # show a warning instead of crashing the entire Streamlit app.
+        st.warning(
+            f"Unable to analyze matrix: {e}"
+        )
+
+            # ============================================================
+    # CHANGED: MATHEMATICAL LP MODEL
+    # ============================================================
+    # The uploaded CSV stores the sparse matrix as individual
+    # coefficient records.
+    #
+    # Example:
+    # constraint,1,1,1.0,10000.0,<=
+    # constraint,1,124,1.1,,
+    #
+    # These records mean:
+    #
+    # 1.0*x1 + 1.1*x124 + ... <= 10000
+    #
+    # This section converts those records into a form that
+    # a human/judge can understand.
+    # ============================================================
+
+    try:
+
+        # CHANGED: Read the uploaded file again from its raw bytes.
+        # Using BytesIO prevents problems caused by the file pointer
+        # already being used by the preview/analysis section.
+        model_df = pd.read_csv(
+            io.BytesIO(uploaded_file.getvalue())
+        )
+
+        # CHANGED: Keep only rows representing constraints.
+        constraint_df = model_df[
+            model_df["type"].astype(str).str.lower() == "constraint"
+        ].copy()
+
+        # CHANGED: Make sure column numbers and coefficient values
+        # are treated as numbers.
+        constraint_df["col"] = pd.to_numeric(
+            constraint_df["col"],
+            errors="coerce"
+        )
+
+        constraint_df["value"] = pd.to_numeric(
+            constraint_df["value"],
+            errors="coerce"
+        )
+
+        # CHANGED: Remove invalid coefficient records.
+        constraint_df = constraint_df.dropna(
+            subset=["row", "col", "value"]
+        )
+
+        # CHANGED: Display the mathematical model section.
+        st.markdown(
+            '<div class="section-title">MATHEMATICAL OPTIMIZATION MODEL</div>',
+            unsafe_allow_html=True
+        )
+
+        # --------------------------------------------------------
+        # CHANGED: Show the general mathematical form.
+        # --------------------------------------------------------
+
+        st.markdown(
+            """
+            ### Linear Constraint Form
+
+            The uploaded sparse data is converted into:
+
+            **A × x ≤ b**
+
+            where:
+
+            - **A** = coefficient matrix
+            - **x** = decision variables
+            - **b** = right-hand-side constraint values
+            """
+        )
+
+        # --------------------------------------------------------
+        # CHANGED: Display variable information.
+        # --------------------------------------------------------
+
+        variable_count_model = int(
+            constraint_df["col"].max()
+        )
+
+        st.metric(
+            "DECISION VARIABLES",
+            f"{variable_count_model:,}"
+        )
+
+        st.caption(
+            f"Decision variables: x₁ through x{variable_count_model:,}"
+        )
+
+        # --------------------------------------------------------
+        # CHANGED: Build readable constraint equations.
+        # --------------------------------------------------------
+        # We only display the first few constraints.
+        # A dataset can contain thousands of constraints, so
+        # displaying all of them would make the dashboard unusable.
+        # --------------------------------------------------------
+
+        st.markdown("### Sample Constraints")
+
+        # Group all coefficient records belonging to the same row.
+        grouped_constraints = constraint_df.groupby(
+            "row",
+            sort=True
+        )
+
+        # Display only the first 5 constraints.
+        displayed_constraints = 0
+
+        for row_number, group in grouped_constraints:
+
+            # Stop after five equations.
+            if displayed_constraints >= 5:
+                break
+
+            # ----------------------------------------------------
+            # CHANGED: Build the left-hand side of the equation.
+            # ----------------------------------------------------
+
+            terms = []
+
+            for _, record in group.iterrows():
+
+                # Get the variable number.
+                variable_number = int(record["col"])
+
+                # Get the coefficient.
+                coefficient = float(record["value"])
+
+                # Create a readable term such as:
+                # 1.0x1
+                # 1.1x124
+                term = (
+                    f"{coefficient:g}"
+                    f"x{variable_number}"
+                )
+
+                terms.append(term)
+
+            # Join terms together.
+            left_side = " + ".join(terms)
+
+            # ----------------------------------------------------
+            # CHANGED: Extract RHS and constraint direction.
+            # ----------------------------------------------------
+
+            rhs_values = pd.to_numeric(
+                group["rhs"],
+                errors="coerce"
+            ).dropna()
+
+            if len(rhs_values) > 0:
+
+                # The RHS is stored once for the constraint.
+                rhs_value = rhs_values.iloc[0]
+
+                # Get <=, >= or = if supplied.
+                senses = group["sense"].dropna()
+
+                if len(senses) > 0:
+                    sense = str(senses.iloc[0])
+                else:
+                    sense = "<="
+
+                equation = (
+                    f"**C{int(row_number)}:**  "
+                    f"{left_side} {sense} {rhs_value:g}"
+                )
+
+                st.markdown(equation)
+
+            displayed_constraints += 1
+
+        # Tell the user that only a sample is displayed.
+        st.caption(
+            f"Showing {displayed_constraints} sample constraints "
+            f"from {len(grouped_constraints):,} total constraints."
+        )
+
+        # --------------------------------------------------------
+        # CHANGED: Matrix representation.
+        # --------------------------------------------------------
+
+        st.markdown("### Matrix Representation")
+
+        st.latex(
+            r"A x \leq b"
+        )
+
+        # Display the dimensions without creating a huge dense matrix.
+        # IMPORTANT:
+        # A 5,000 × 10,000 dense matrix would contain 50 million
+        # elements. We therefore keep the actual data sparse.
+        matrix_rows = constraint_df["row"].nunique()
+        matrix_cols = int(constraint_df["col"].max())
+
+        st.info(
+            f"A = {matrix_rows:,} × {matrix_cols:,}    |    "
+            f"x = {matrix_cols:,} × 1    |    "
+            f"b = {matrix_rows:,} × 1"
+        )
+
+        # --------------------------------------------------------
+        # CHANGED: Explain the sparse representation.
+        # --------------------------------------------------------
+
+        st.markdown(
+            """
+            **Sparse representation**
+
+            Only the non-zero coefficients are stored in the input
+            dataset. This avoids creating unnecessary zero values and
+            is important when working with large optimization problems.
+            """
+        )
+
+        # --------------------------------------------------------
+        # CHANGED: Show the first few A coefficients.
+        # --------------------------------------------------------
+
+        with st.expander("◈ VIEW SPARSE MATRIX COEFFICIENTS"):
+
+            st.dataframe(
+                constraint_df[
+                    ["row", "col", "value", "rhs", "sense"]
+                ].head(20),
+                use_container_width=True
+            )
+
+        # --------------------------------------------------------
+        # CHANGED: Objective function status.
+        # --------------------------------------------------------
+        # The uploaded dataset contains constraints but no objective
+        # records, so we explicitly tell the judge instead of
+        # inventing an objective function.
+        # --------------------------------------------------------
+
+        objective_rows = model_df[
+            model_df["type"].astype(str).str.lower() == "objective"
+        ]
+
+        if len(objective_rows) == 0:
+
+            st.warning(
+                "Objective function (c) is not provided in this "
+                "dataset. The current input defines the constraint "
+                "matrix A and RHS vector b."
+            )
+
+        else:
+
+            st.success(
+                "Objective function detected in the input dataset."
+            )
+
+    except Exception as e:
+
+        # CHANGED: Prevent the mathematical-model section from
+        # crashing the entire dashboard if the input format changes.
+        st.warning(
+            f"Unable to build mathematical model: {e}"
+        )
+
+        # ============================================================
+# CHANGED: GPU OPTIMIZATION PIPELINE
+# ============================================================
+# This section visually explains how the mathematical model
+# moves from the uploaded CSV to the CUDA/GPU solver.
+#
+# IMPORTANT:
+# This is a pipeline explanation, not fake solver progress.
+# The actual solver is still executed by run_gpu_solver().
+# ============================================================
+
+st.markdown(
+    '<div class="section-title">GPU OPTIMIZATION PIPELINE</div>',
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    ### From Mathematical Model to GPU
+
+    The optimization problem follows this execution pipeline:
+    """
+)
+
+# ------------------------------------------------------------
+# CHANGED: Pipeline stages
+# ------------------------------------------------------------
+# Each box represents one stage of the actual workflow.
+# ------------------------------------------------------------
+
+col1, col2, col3, col4, col5 = st.columns(5)
+
+with col1:
+    st.markdown(
+        """
+        **① INPUT**
+
+        📄
+
+        Sparse CSV
+
+        A, b
+        """
+    )
+
+with col2:
+    st.markdown(
+        """
+        **② MODEL**
+
+        📐
+
+        A × x ≤ b
+
+        LP Model
+        """
+    )
+
+with col3:
+    st.markdown(
+        """
+        **③ BRIDGE**
+
+        🔄
+
+        Python
+
+        → CUDA
+        """
+    )
+
+with col4:
+    st.markdown(
+        """
+        **④ SOLVER**
+
+        ⚙️
+
+        CUDA
+
+        GPU
+        """
+    )
+
+with col5:
+    st.markdown(
+        """
+        **⑤ RESULT**
+
+        📊
+
+        Optimization
+
+        Output
+        """
+    )
+
+# ------------------------------------------------------------
+# CHANGED: Explain the data flow.
+# ------------------------------------------------------------
+
+st.info(
+    """
+    **Data flow:** The sparse CSV provides the constraint
+    coefficients and RHS values → these represent the
+    mathematical model A × x ≤ b → the Python layer passes
+    the optimization data to the CUDA solver → CUDA executes
+    the computation on the NVIDIA GPU → the solver returns
+    the optimization result and performance metrics.
+    """
+)
 st.divider()
 
 run_button = st.button(
@@ -634,6 +1157,146 @@ if run_button:
                 "objective",
                 0
             )
+
+            # ========================================================
+            # CHANGED: GPU OPTIMIZATION EXPLAINABILITY
+            # ========================================================
+            # In DEMO MODE this displays simulated iteration history,
+            # convergence, solution values and constraint utilization.
+            # Later, these values can be replaced directly by the
+            # real CUDA solver output without changing the UI layout.
+            # ========================================================
+
+            st.divider()
+
+            st.markdown(
+                '<div class="section-title">GPU OPTIMIZATION</div>',
+                unsafe_allow_html=True
+            )
+
+            if demo_mode:
+                st.caption("DEMO MODE — Simulated optimization progress")
+
+                # CHANGED: Load simulated optimization iterations.
+                trace_df = demo_optimization_trace()
+
+                st.markdown("### Iteration Progress")
+
+                # CHANGED: Show iteration, objective and residual together.
+                # CHANGED: Use a fixed-width table layout so iteration data is always visible.
+                display_trace = trace_df.copy()
+                display_trace["Objective"] = display_trace["Objective"].map(lambda v: f"{v:,.1f}")
+                display_trace["Residual"] = display_trace["Residual"].map(lambda v: f"{v:.2f}")
+                st.table(display_trace)
+
+                # CHANGED: Show convergence status.
+                st.success("✓ CONVERGED")
+
+                # CHANGED: Visualize objective reduction over iterations.
+                st.markdown("### Objective Convergence")
+
+                # CHANGED: Keep only the two values needed by the chart.
+                # This prevents Streamlit from trying to plot Residual
+                # on the same scale as Objective.
+                convergence_df = trace_df[
+                    ["Iteration", "Objective"]
+                ].copy()
+
+                convergence_df["Iteration"] = pd.to_numeric(
+                    convergence_df["Iteration"],
+                    errors="coerce"
+                )
+                convergence_df["Objective"] = pd.to_numeric(
+                    convergence_df["Objective"],
+                    errors="coerce"
+                )
+
+                convergence_df = convergence_df.dropna()
+                convergence_df = convergence_df.set_index("Iteration")
+
+                # CHANGED: Plot the objective against iteration.
+                # A fixed height keeps the dashboard compact and readable.
+                st.line_chart(
+                    convergence_df["Objective"],
+                    height=300,
+                    use_container_width=True
+                )
+
+                # CHANGED: Explain the convergence numerically.
+                first_objective = convergence_df["Objective"].iloc[0]
+                final_objective = convergence_df["Objective"].iloc[-1]
+
+                if first_objective != 0:
+                    improvement = (
+                        (first_objective - final_objective)
+                        / first_objective
+                    ) * 100
+                else:
+                    improvement = 0
+
+                st.caption(
+                    f"Objective reduced from "
+                    f"{first_objective:,.1f} to {final_objective:,.1f} "
+                    f"— {improvement:.1f}% improvement."
+                )
+
+                # CHANGED: Show final demo optimization result.
+                st.markdown("### OPTIMAL SOLUTION")
+
+                # CHANGED: Keep the demo optimization objective consistent with the displayed demo trace.
+                final_objective = trace_df.iloc[-1]["Objective"]
+
+                solution_col1, solution_col2 = st.columns(2)
+
+                with solution_col1:
+                    st.metric(
+                        "OBJECTIVE VALUE",
+                        f"₹{final_objective:,.2f}"
+                    )
+
+                with solution_col2:
+                    st.metric(
+                        "FINAL RESIDUAL",
+                        f"{trace_df.iloc[-1]['Residual']:.2f}"
+                    )
+
+                st.markdown("**Selected Variables**")
+
+                x1, x2, x3, x4 = st.columns(4)
+
+                with x1:
+                    st.metric("x1", "120")
+                with x2:
+                    st.metric("x2", "80")
+                with x3:
+                    st.metric("x3", "45")
+                with x4:
+                    st.metric("x4", "0")
+
+                # CHANGED: Demonstrate constraint utilization.
+                # These are UI demo values, not calculated from the
+                # uploaded dataset or the real CUDA solver.
+                st.markdown("### CONSTRAINT CHECK")
+
+                st.write("Constraint 1 — 91%")
+                st.progress(0.91)
+
+                st.write("Constraint 2 — 72%")
+                st.progress(0.72)
+
+                st.write("Constraint 3 — 100%")
+                st.progress(1.00)
+
+                st.success("✓ All demo constraints satisfied")
+
+            else:
+                # CHANGED: Do not invent live iteration/solution values.
+                # The real CUDA solver must expose this information first.
+                st.info(
+                    "Live CUDA solver connected. Iteration history, "
+                    "solution variables and constraint validation will "
+                    "appear here when the solver provides them."
+                )
 
             st.divider()
 
@@ -752,9 +1415,11 @@ if run_button:
                     unsafe_allow_html=True
                 )
 
+                # CHANGED: In DEMO MODE, show the same optimization objective used above.
+                result_objective = final_objective if demo_mode else objective
                 st.metric(
                     "OBJECTIVE VALUE",
-                    f"{objective:,.2f}"
+                    f"{result_objective:,.2f}"
                 )
 
             with col2:
