@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <algorithm>
+#include <iomanip>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cusparse.h>
@@ -247,11 +248,17 @@ void read_and_compress_matrix(const char* filename, int& M, int& N, int& nnz,
 // MAIN GPU EXECUTION LOOP
 // ==========================================================================
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <matrix_file.txt>\n";
+    if (argc < 3) {
+        std::cerr << "Usage: " << argv[0] << " <matrix_file.txt> <output_result.json>\n";
         return EXIT_FAILURE;
     }
     const char* filename = argv[1];
+    const char* output_json_path = argv[2];
+
+    // End-to-end wall clock: covers file parsing, GPU memory transfer,
+    // the PDHG loop, GPU->CPU copy, and un-scaling -- this is what the
+    // Streamlit UI's "total_time_ms" / GPU END-TO-END figure means.
+    auto wall_start = std::chrono::high_resolution_clock::now();
 
     int M = 0, N = 0, nnz = 0;
     std::vector<double> c, b, csr_values, csc_values;
@@ -487,31 +494,68 @@ int main(int argc, char** argv) {
         objective_value += c_orig[j] * h_x[j]; 
     }
 
-    // Cleanup & Telemetry Output
+    // Cleanup
     CUSPARSE_CHECK(cusparseDestroy(cusparse_handle));
     CUBLAS_CHECK(cublasDestroy(cublas_handle));
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop));
 
+    // Map internal convergence state to what the Streamlit frontend
+    // checks for: it treats "OPTIMAL"/"SUCCESS"/"COMPLETED" as success
+    // and anything else as a warning -- so a run that hits MAX_ITER
+    // without converging is correctly surfaced as non-optimal instead
+    // of being falsely reported as solved.
     std::string status;
-    if (std::isnan(final_gap) || std::isinf(final_gap) || std::isnan(final_primal_res) || std::isinf(final_primal_res)) {
+    if (std::isnan(final_gap) || std::isinf(final_gap) ||
+        std::isnan(final_primal_res) || std::isinf(final_primal_res)) {
         status = "DIVERGED";
     } else if (actual_iterations < MAX_ITER) {
-        status = "CONVERGED";
+        status = "OPTIMAL";
     } else {
         status = "MAX_ITER_REACHED";
     }
 
-    std::cout.precision(10);
-    std::cout << status << "," << std::fixed << objective_value << "," << actual_iterations << "," 
-              << kernel_time_ms << "," << final_gap << "," 
-              << final_primal_res << "," << final_dual_res << "\n";
+    auto wall_end = std::chrono::high_resolution_clock::now();
+    double total_time_ms =
+        std::chrono::duration<double, std::milli>(wall_end - wall_start).count();
 
-    std::ofstream out_file("solution_x.txt");
-    for (int j = 0; j < N; j++) {
-        out_file << h_x[j] << "\n";
+    // Human-readable progress line. execute_live() in frontend.py merges
+    // stderr into the same stream it streams live into the console box,
+    // same as the existing "iter=... gap=..." diagnostic lines above.
+    std::cerr << "Solver finished: status=" << status
+              << " objective=" << std::fixed << std::setprecision(6) << objective_value
+              << " iterations=" << actual_iterations
+              << " gpu_compute_time_ms=" << kernel_time_ms
+              << " total_time_ms=" << total_time_ms << "\n";
+
+    // Structured JSON result -- this is the file run_pipeline() actually
+    // reads (argv[2]). Keys must match validate_result() ("matrix",
+    // "performance") and the fields it pulls from "performance"
+    // (gpu_compute_time_ms, total_time_ms).
+    std::ofstream json_out(output_json_path);
+    if (!json_out.is_open()) {
+        std::cerr << "ERROR: could not open output JSON path: " << output_json_path << "\n";
+        return EXIT_FAILURE;
     }
-    out_file.close();
+    json_out << std::fixed << std::setprecision(10);
+    json_out << "{\n";
+    json_out << "  \"status\": \"" << status << "\",\n";
+    json_out << "  \"objective_value\": " << objective_value << ",\n";
+    json_out << "  \"iterations\": " << actual_iterations << ",\n";
+    json_out << "  \"primal_residual\": " << final_primal_res << ",\n";
+    json_out << "  \"dual_residual\": " << final_dual_res << ",\n";
+    json_out << "  \"duality_gap\": " << final_gap << ",\n";
+    json_out << "  \"matrix\": {\n";
+    json_out << "    \"rows\": " << M << ",\n";
+    json_out << "    \"cols\": " << N << ",\n";
+    json_out << "    \"nnz\": " << nnz << "\n";
+    json_out << "  },\n";
+    json_out << "  \"performance\": {\n";
+    json_out << "    \"gpu_compute_time_ms\": " << kernel_time_ms << ",\n";
+    json_out << "    \"total_time_ms\": " << total_time_ms << "\n";
+    json_out << "  }\n";
+    json_out << "}\n";
+    json_out.close();
 
     // VRAM Free
     CUSPARSE_CHECK(cusparseDestroySpMat(matA));
